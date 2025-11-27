@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Board from "./components/Board";
 import styles from "./styles/theme.module.css";
+import * as api from "./services/api";
 
 // PUBLIC_INTERFACE
 function calculateWinner(squares) {
@@ -39,36 +40,107 @@ function getGameStatus(squares, xIsNext) {
 }
 
 function App() {
-  // Use state for game
+  // Use state for game and network
   const [squares, setSquares] = useState(Array(9).fill(null));
   const [xIsNext, setXIsNext] = useState(true);
+  const [winner, setWinner] = useState(null);
+  const [offline, setOffline] = useState(false);
+  const [isDraw, setIsDraw] = useState(false);
+  // If backend loaded at least once successfully, stay in online mode
+  const [backendActive, setBackendActive] = useState(false);
+
+  // Try to fetch initial state from backend
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const state = await api.getState();
+        if (!mounted) return;
+        setSquares(state.squares);
+        setXIsNext(state.xIsNext);
+        setWinner(state.winner);
+        setIsDraw(state.isDraw);
+        setOffline(false);
+        setBackendActive(true);
+      } catch (err) {
+        // Backend not reachable; use local state
+        setOffline(true);
+        setBackendActive(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  // Wrapper to update state after backend call (or fallback to local if offline)
+  const updateStateFromBackend = useCallback(async (action, ...args) => {
+    if (!backendActive && offline) {
+      // fallback mode
+      return false;
+    }
+    try {
+      let nextState;
+      if (action === "move") {
+        nextState = await api.postMove(args[0]);
+      } else if (action === "reset") {
+        nextState = await api.reset();
+      }
+      if (nextState) {
+        setSquares(nextState.squares);
+        setXIsNext(nextState.xIsNext);
+        setWinner(nextState.winner);
+        setIsDraw(nextState.isDraw);
+        setOffline(false);
+        setBackendActive(true);
+        return true;
+      }
+    } catch (e) {
+      setOffline(true);
+      setBackendActive(false);
+    }
+    return false;
+  }, [backendActive, offline]);
 
   // Reset game
-  const handleReset = () => {
-    setSquares(Array(9).fill(null));
-    setXIsNext(true);
+  const handleReset = async () => {
+    // Try backend; fallback to local
+    const usedBackend = await updateStateFromBackend("reset");
+    if (!usedBackend) {
+      setSquares(Array(9).fill(null));
+      setXIsNext(true);
+      setWinner(null);
+      setIsDraw(false);
+    }
   };
 
   // Handle cell click
-  const handleSquareClick = (idx) => {
+  const handleSquareClick = async (idx) => {
     // If game over or cell already filled, ignore
-    const {winner, line} = calculateWinner(squares) || {};
-    if (winner || squares[idx]) return;
-    // Make move
-    const nextSquares = squares.slice();
-    nextSquares[idx] = xIsNext ? "X" : "O";
-    setSquares(nextSquares);
-    setXIsNext(!xIsNext);
+    const gameStatus = calculateWinner(squares);
+    const winnerVal = gameStatus ? gameStatus.winner : winner;
+    if (winnerVal || squares[idx]) return;
+    // Try backend; fallback to local
+    const usedBackend = await updateStateFromBackend("move", idx);
+    if (!usedBackend) {
+      const nextSquares = squares.slice();
+      nextSquares[idx] = xIsNext ? "X" : "O";
+      setSquares(nextSquares);
+      setXIsNext(!xIsNext);
+      // Check winner/draw after move
+      const winData = calculateWinner(nextSquares);
+      if (winData) setWinner(winData.winner);
+      else setWinner(null);
+      setIsDraw(nextSquares.every(Boolean) && !winData);
+    }
   };
 
   // Determine status
-  const {status, winner, line} = getGameStatus(squares, xIsNext);
+  const {status, line} = getGameStatus(squares, xIsNext);
 
   // Player indicator chip colors
   let statusClass = styles.statusChip;
   if (winner && winner === "X") statusClass = styles.statusChip;
   else if (winner && winner === "O") statusClass = styles.statusChip;
-  else if (status === "Draw") statusClass = styles.statusChipDraw;
+  else if (status === "Draw" || isDraw) statusClass = styles.statusChipDraw;
 
   return (
     <div className={styles.appBg}>
@@ -82,8 +154,8 @@ function App() {
             className={`
               ${styles.statusChip}
               ${winner ? "" : xIsNext ? "" : ""}
-              ${status === "Draw" ? styles.statusChipDraw : ""}
-              ${winner ? styles.statusChipError : ""}
+              ${(status === "Draw" || isDraw) ? styles.statusChipDraw : ""}
+              {winner ? styles.statusChipError : ""}
             `}
             aria-live="polite"
             role="status"
@@ -91,12 +163,35 @@ function App() {
           >
             {status}
           </span>
+          {offline && (
+            <span
+              style={{
+                color: "#efb622",
+                background: "rgba(245, 158, 11, 0.09)",
+                fontSize: "0.93rem",
+                padding: "2px 12px",
+                borderRadius: "12px",
+                marginLeft: 8,
+                fontWeight: 500,
+                letterSpacing: "0.02em",
+                border: "1px solid #ffeaa3",
+                boxShadow: "0 1px 5px rgba(245,158,11,.10)",
+                alignSelf: "center",
+                transition: "opacity 0.4s",
+              }}
+              aria-live="polite"
+              role="status"
+              id="offline-notice"
+            >
+              Offline mode
+            </span>
+          )}
         </div>
         <Board
           squares={squares}
           onSquareClick={handleSquareClick}
           winningLine={line}
-          disabled={Boolean(winner) || status === "Draw"}
+          disabled={Boolean(winner) || status === "Draw" || isDraw}
         />
         <button
           className={styles.resetBtn}

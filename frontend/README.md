@@ -29,7 +29,27 @@ It correctly bundles React in production mode and optimizes the build for the be
 
 ## Customization
 
-### Colors
+---
+
+## Backend API Integration
+
+Optionally connect to a backend API by setting the `REACT_APP_BACKEND_URL` environment variable.
+If the backend is not reachable, the app falls back to local in-memory mode and shows an 'Offline mode' indicator.
+
+### Usage
+
+In your `.env` file (or in your shell), specify:
+
+```env
+REACT_APP_BACKEND_URL=http://localhost:3010
+```
+
+- If the backend is **available**, the game state persists via backend HTTP API.
+- If the backend is **unavailable**, gameplay runs purely in-memory (no server) and the UI shows an 'Offline mode' notice.
+
+The default backend URL is `http://localhost:3010` if `REACT_APP_BACKEND_URL` is not set.
+
+---
 
 The main brand colors are defined as CSS variables in `src/App.css`:
 
